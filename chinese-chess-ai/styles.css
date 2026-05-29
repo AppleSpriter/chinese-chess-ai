@@ -400,6 +400,14 @@ select:hover {
   font-weight: 800;
 }
 
+.difficulty-hint {
+  min-height: 34px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 select,
 input[type="range"] {
   width: 100%;

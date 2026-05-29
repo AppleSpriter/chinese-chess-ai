@@ -37,6 +37,56 @@ const PIECE_VALUE = {
 
 const MATE_SCORE = 1000000;
 const FILE_NAMES = ["一", "二", "三", "四", "五", "六", "七", "八", "九"];
+const TT_EXACT = "exact";
+const TT_LOWER = "lower";
+const TT_UPPER = "upper";
+
+const DIFFICULTY_PRESETS = {
+  easy: {
+    label: "入门",
+    depth: 1,
+    quiescenceDepth: 0,
+    useTransposition: false,
+    candidatePool: 5,
+    randomness: 0.78,
+    maxRandomLoss: 520,
+    maxTacticalMoves: 8,
+    hint: "看得浅，会在几个还不错的走法里随机选。",
+  },
+  normal: {
+    label: "普通",
+    depth: 2,
+    quiescenceDepth: 1,
+    useTransposition: true,
+    candidatePool: 3,
+    randomness: 0.22,
+    maxRandomLoss: 260,
+    maxTacticalMoves: 12,
+    hint: "均衡搜索，适合日常对弈。",
+  },
+  hard: {
+    label: "困难",
+    depth: 3,
+    quiescenceDepth: 2,
+    useTransposition: true,
+    candidatePool: 1,
+    randomness: 0,
+    maxRandomLoss: 0,
+    maxTacticalMoves: 16,
+    hint: "启用更深搜索、缓存和关键吃子延伸。",
+  },
+  expert: {
+    label: "大师",
+    depth: 3,
+    quiescenceDepth: 3,
+    useTransposition: true,
+    candidatePool: 1,
+    randomness: 0,
+    maxRandomLoss: 0,
+    maxTacticalMoves: 20,
+    hint: "当前最强档，更重视吃子序列；可手动把深度推到 4。",
+  },
+};
 
 const boardEl = document.querySelector("#board");
 const statusText = document.querySelector("#statusText");
@@ -51,6 +101,8 @@ const analysisState = document.querySelector("#analysisState");
 const moveCount = document.querySelector("#moveCount");
 const aiEnabledInput = document.querySelector("#aiEnabled");
 const aiColorSelect = document.querySelector("#aiColor");
+const aiDifficultySelect = document.querySelector("#aiDifficulty");
+const difficultyHint = document.querySelector("#difficultyHint");
 const depthRange = document.querySelector("#depthRange");
 const depthValue = document.querySelector("#depthValue");
 const newGameBtn = document.querySelector("#newGameBtn");
@@ -69,6 +121,7 @@ let state = {
   flipped: false,
   aiEnabled: true,
   aiColor: BLACK,
+  aiDifficulty: "normal",
   thinking: false,
 };
 
@@ -499,81 +552,160 @@ function positionalBonus(pieceData, x, y) {
   return 0;
 }
 
-function findBestMoves(board, color, depth, maxLines = 3) {
+function findBestMoves(board, color, depth, maxLines = 3, options = {}) {
+  const searchOptions = normalizeSearchOptions(depth, options);
+  const context = {
+    nodes: 0,
+    options: searchOptions,
+    transposition: new Map(),
+  };
   const start = performance.now();
   const moves = orderMoves(generateLegalMoves(board, color), board);
   const lines = [];
-  let nodes = 0;
+  const visibleLines = maxLines;
 
   if (moves.length === 0) {
     return {
       bestMove: null,
       lines: [],
       score: color === RED ? -MATE_SCORE : MATE_SCORE,
-      nodes,
+      nodes: context.nodes,
       elapsed: performance.now() - start,
+      options: searchOptions,
     };
   }
 
   for (const move of moves) {
     const next = makeMoveOnBoard(board, move);
-    const result = search(next, opponent(color), depth - 1, -MATE_SCORE, MATE_SCORE, 1);
-    nodes += result.nodes;
-    lines.push({ move, score: result.score });
+    const score = search(next, opponent(color), searchOptions.depth - 1, -MATE_SCORE, MATE_SCORE, 1, context);
+    lines.push({ move, score });
   }
 
   lines.sort((a, b) => (color === RED ? b.score - a.score : a.score - b.score));
 
   return {
     bestMove: lines[0].move,
-    lines: lines.slice(0, maxLines),
+    lines: lines.slice(0, visibleLines),
     score: lines[0].score,
-    nodes,
+    nodes: context.nodes,
     elapsed: performance.now() - start,
+    options: searchOptions,
   };
 }
 
-function search(board, color, depth, alpha, beta, ply) {
+function normalizeSearchOptions(depth, options = {}) {
+  return {
+    ...DIFFICULTY_PRESETS.normal,
+    ...options,
+    depth: Math.max(1, Number(depth) || DIFFICULTY_PRESETS.normal.depth),
+  };
+}
+
+function search(board, color, depth, alpha, beta, ply, context) {
+  context.nodes += 1;
   const redKing = findKing(board, RED);
   const blackKing = findKing(board, BLACK);
-  if (!redKing) return { score: -MATE_SCORE + ply, nodes: 1 };
-  if (!blackKing) return { score: MATE_SCORE - ply, nodes: 1 };
+  if (!redKing) return -MATE_SCORE + ply;
+  if (!blackKing) return MATE_SCORE - ply;
 
   if (depth <= 0) {
-    return { score: evaluateBoard(board), nodes: 1 };
+    if (context.options.quiescenceDepth > 0) {
+      return quiescence(board, color, alpha, beta, ply, context.options.quiescenceDepth, context);
+    }
+    return evaluateBoard(board);
+  }
+
+  const ttKey = context.options.useTransposition ? boardKey(board, color) : null;
+  const alphaStart = alpha;
+  const betaStart = beta;
+  const cached = ttKey ? context.transposition.get(ttKey) : null;
+
+  if (cached && cached.depth >= depth) {
+    if (cached.flag === TT_EXACT) return cached.score;
+    if (cached.flag === TT_LOWER) alpha = Math.max(alpha, cached.score);
+    if (cached.flag === TT_UPPER) beta = Math.min(beta, cached.score);
+    if (alpha >= beta) return cached.score;
   }
 
   const moves = orderMoves(generateLegalMoves(board, color), board);
   if (moves.length === 0) {
-    return {
-      score: color === RED ? -MATE_SCORE + ply : MATE_SCORE - ply,
-      nodes: 1,
-    };
+    return color === RED ? -MATE_SCORE + ply : MATE_SCORE - ply;
   }
 
-  let nodes = 1;
+  let score;
 
   if (color === RED) {
-    let best = -MATE_SCORE;
+    score = -MATE_SCORE;
     for (const move of moves) {
-      const result = search(makeMoveOnBoard(board, move), BLACK, depth - 1, alpha, beta, ply + 1);
-      nodes += result.nodes;
-      best = Math.max(best, result.score);
-      alpha = Math.max(alpha, best);
+      score = Math.max(score, search(makeMoveOnBoard(board, move), BLACK, depth - 1, alpha, beta, ply + 1, context));
+      alpha = Math.max(alpha, score);
       if (alpha >= beta) break;
     }
-    return { score: best, nodes };
+  } else {
+    score = MATE_SCORE;
+    for (const move of moves) {
+      score = Math.min(score, search(makeMoveOnBoard(board, move), RED, depth - 1, alpha, beta, ply + 1, context));
+      beta = Math.min(beta, score);
+      if (alpha >= beta) break;
+    }
   }
 
-  let best = MATE_SCORE;
+  if (ttKey) {
+    let flag = TT_EXACT;
+    if (score <= alphaStart) flag = TT_UPPER;
+    else if (score >= betaStart) flag = TT_LOWER;
+    context.transposition.set(ttKey, { depth, score, flag });
+  }
+
+  return score;
+}
+
+function quiescence(board, color, alpha, beta, ply, remaining, context) {
+  context.nodes += 1;
+  const standPat = evaluateBoard(board);
+  if (remaining <= 0) return standPat;
+
+  const moves = tacticalMoves(board, color, context);
+  if (moves.length === 0) return standPat;
+
+  if (color === RED) {
+    if (standPat >= beta) return standPat;
+    alpha = Math.max(alpha, standPat);
+    for (const move of moves) {
+      const score = quiescence(makeMoveOnBoard(board, move), BLACK, alpha, beta, ply + 1, remaining - 1, context);
+      alpha = Math.max(alpha, score);
+      if (alpha >= beta) break;
+    }
+    return alpha;
+  }
+
+  if (standPat <= alpha) return standPat;
+  beta = Math.min(beta, standPat);
   for (const move of moves) {
-    const result = search(makeMoveOnBoard(board, move), RED, depth - 1, alpha, beta, ply + 1);
-    nodes += result.nodes;
-    best = Math.min(best, result.score);
-    beta = Math.min(beta, best);
+    const score = quiescence(makeMoveOnBoard(board, move), RED, alpha, beta, ply + 1, remaining - 1, context);
+    beta = Math.min(beta, score);
     if (alpha >= beta) break;
   }
-  return { score: best, nodes };
+  return beta;
+}
+
+function tacticalMoves(board, color, context) {
+  const maxMoves = context.options.maxTacticalMoves || 12;
+  return orderMoves(
+    generateLegalMoves(board, color).filter((move) => Boolean(board[move.toY][move.toX])),
+    board,
+  ).slice(0, maxMoves);
+}
+
+function boardKey(board, color) {
+  let key = color;
+  for (let y = 0; y < 10; y += 1) {
+    for (let x = 0; x < 9; x += 1) {
+      const p = board[y][x];
+      key += p ? `${p.color[0]}${p.type}` : ".";
+    }
+  }
+  return key;
 }
 
 function orderMoves(moves, board) {
@@ -604,14 +736,60 @@ function scoreText(score) {
   return `${lead} ${Math.abs(score / 100).toFixed(1)}`;
 }
 
+function currentSearchOptions() {
+  const preset = DIFFICULTY_PRESETS[state.aiDifficulty] || DIFFICULTY_PRESETS.normal;
+  return {
+    ...preset,
+    depth: Number(depthRange.value) || preset.depth,
+  };
+}
+
+function updateDifficultyUi() {
+  const preset = DIFFICULTY_PRESETS[state.aiDifficulty] || DIFFICULTY_PRESETS.normal;
+  depthValue.textContent = depthRange.value;
+  difficultyHint.textContent = preset.hint;
+}
+
+function selectAiMove(result, color, options) {
+  if (!result.bestMove) return null;
+  const poolSize = Math.max(1, options.candidatePool || 1);
+  const pool = result.lines.slice(0, poolSize);
+  if (pool.length <= 1 || Math.random() > options.randomness) return result.bestMove;
+
+  const bestScore = pool[0].score;
+  const candidates = pool.filter((line) => scoreLoss(line.score, bestScore, color) <= options.maxRandomLoss);
+  if (candidates.length <= 1) return result.bestMove;
+
+  const temperature = Math.max(80, options.maxRandomLoss / 2);
+  const weights = candidates.map((line) => Math.exp(-scoreLoss(line.score, bestScore, color) / temperature));
+  const selected = weightedChoice(candidates, weights);
+  return selected.move;
+}
+
+function scoreLoss(score, bestScore, color) {
+  return color === RED ? bestScore - score : score - bestScore;
+}
+
+function weightedChoice(items, weights) {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let cursor = Math.random() * total;
+
+  for (let i = 0; i < items.length; i += 1) {
+    cursor -= weights[i];
+    if (cursor <= 0) return items[i];
+  }
+
+  return items[0];
+}
+
 function scheduleAnalysis() {
   const token = (analysisToken += 1);
   analysisState.textContent = "计算中";
 
   window.setTimeout(() => {
     if (token !== analysisToken) return;
-    const depth = Number(depthRange.value);
-    const result = findBestMoves(cloneBoard(state.board), state.turn, depth, 3);
+    const options = currentSearchOptions();
+    const result = findBestMoves(cloneBoard(state.board), state.turn, options.depth, 3, options);
     if (token !== analysisToken) return;
     renderAnalysis(result);
   }, 30);
@@ -634,7 +812,7 @@ function renderAnalysis(result) {
     return;
   }
 
-  analysisState.textContent = `${result.elapsed.toFixed(0)} ms`;
+  analysisState.textContent = `${result.elapsed.toFixed(0)} ms · ${result.nodes} 节点`;
   if (result.lines.length === 0) {
     const li = document.createElement("li");
     li.innerHTML = `<div><b>暂无合法走法</b><span>当前一方已经无棋可走。</span></div>`;
@@ -669,11 +847,12 @@ function maybeScheduleAi() {
   renderStatus();
 
   window.setTimeout(() => {
-    const depth = Number(depthRange.value);
-    const result = findBestMoves(cloneBoard(state.board), state.turn, depth, 1);
+    const options = currentSearchOptions();
+    const result = findBestMoves(cloneBoard(state.board), state.turn, options.depth, Math.max(3, options.candidatePool), options);
+    const selectedMove = selectAiMove(result, state.turn, options);
     state.thinking = false;
-    if (!state.gameOver && result.bestMove && state.turn === state.aiColor) {
-      applyMove(result.bestMove, "ai");
+    if (!state.gameOver && selectedMove && state.turn === state.aiColor) {
+      applyMove(selectedMove, "ai");
     } else {
       renderStatus();
     }
@@ -849,6 +1028,7 @@ function resetGame() {
     flipped: state.flipped,
     aiEnabled: aiEnabledInput.checked,
     aiColor: aiColorSelect.value,
+    aiDifficulty: aiDifficultySelect.value,
     thinking: false,
   };
   render();
@@ -879,10 +1059,12 @@ function makeAiMoveForCurrentSide() {
   renderStatus();
 
   window.setTimeout(() => {
-    const result = findBestMoves(cloneBoard(state.board), state.turn, Number(depthRange.value), 1);
+    const options = currentSearchOptions();
+    const result = findBestMoves(cloneBoard(state.board), state.turn, options.depth, Math.max(3, options.candidatePool), options);
+    const selectedMove = selectAiMove(result, state.turn, options);
     state.thinking = false;
-    if (result.bestMove) {
-      applyMove(result.bestMove, "ai");
+    if (selectedMove) {
+      applyMove(selectedMove, "ai");
     } else {
       renderStatus();
     }
@@ -910,8 +1092,17 @@ aiColorSelect.addEventListener("change", () => {
   maybeScheduleAi();
 });
 
+aiDifficultySelect.addEventListener("change", () => {
+  state.aiDifficulty = aiDifficultySelect.value;
+  const preset = DIFFICULTY_PRESETS[state.aiDifficulty] || DIFFICULTY_PRESETS.normal;
+  depthRange.value = preset.depth;
+  updateDifficultyUi();
+  scheduleAnalysis();
+  maybeScheduleAi();
+});
+
 depthRange.addEventListener("input", () => {
-  depthValue.textContent = depthRange.value;
+  updateDifficultyUi();
   scheduleAnalysis();
 });
 
@@ -925,5 +1116,6 @@ window.__xiangqiDebug = {
   createInitialBoard,
 };
 
+updateDifficultyUi();
 render();
 scheduleAnalysis();

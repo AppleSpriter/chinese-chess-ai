@@ -62,7 +62,16 @@
             <option value="red">红方</option>
           </select>
 
-          <label class="field-label" for="depthRange">AI 深度 <span id="depthValue">2</span></label>
+          <label class="field-label" for="aiDifficulty">AI 难度</label>
+          <select id="aiDifficulty">
+            <option value="easy">入门</option>
+            <option value="normal" selected>普通</option>
+            <option value="hard">困难</option>
+            <option value="expert">大师</option>
+          </select>
+          <p id="difficultyHint" class="difficulty-hint">均衡搜索，适合日常对弈。</p>
+
+          <label class="field-label" for="depthRange">搜索深度 <span id="depthValue">2</span></label>
           <input id="depthRange" type="range" min="1" max="4" value="2" />
         </section>
 
