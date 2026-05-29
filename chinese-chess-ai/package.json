@@ -1,0 +1,9 @@
+{
+  "name": "chinese-chess-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "浏览器版中国象棋 AI 对弈与实时胜率分析。",
+  "scripts": {
+    "dev": "python3 -m http.server 5173"
+  }
+}

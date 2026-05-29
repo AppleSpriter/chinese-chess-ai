@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>中国象棋 AI 对弈</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="play-area" aria-label="中国象棋棋局">
+        <header class="top-bar">
+          <div>
+            <h1>中国象棋 AI 对弈</h1>
+            <p id="statusText" class="status-text">红方先行</p>
+          </div>
+          <div class="turn-pill" id="turnPill">红方</div>
+        </header>
+
+        <div class="board-panel">
+          <div id="board" class="board" role="application" aria-label="中国象棋棋盘"></div>
+        </div>
+
+        <div class="controls" aria-label="棋局控制">
+          <button id="newGameBtn" type="button">新局</button>
+          <button id="undoBtn" type="button">悔棋</button>
+          <button id="aiMoveBtn" type="button">AI 走一步</button>
+          <button id="flipBtn" type="button">翻转棋盘</button>
+        </div>
+      </section>
+
+      <aside class="analysis-panel" aria-label="AI 分析">
+        <section class="panel-block win-card">
+          <div class="panel-title">
+            <span>实时胜率</span>
+            <strong id="evalText">均势</strong>
+          </div>
+          <div class="win-meter" aria-label="红黑双方胜率">
+            <div id="redWinBar" class="red-win"></div>
+          </div>
+          <div class="win-labels">
+            <span id="redWinText">红方 50%</span>
+            <span id="blackWinText">黑方 50%</span>
+          </div>
+        </section>
+
+        <section class="panel-block settings-card">
+          <div class="setting-row">
+            <label class="switch">
+              <input id="aiEnabled" type="checkbox" checked />
+              <span></span>
+            </label>
+            <div>
+              <strong>人机对弈</strong>
+              <p>开启后 AI 自动执所选颜色。</p>
+            </div>
+          </div>
+
+          <label class="field-label" for="aiColor">AI 执棋</label>
+          <select id="aiColor">
+            <option value="black" selected>黑方</option>
+            <option value="red">红方</option>
+          </select>
+
+          <label class="field-label" for="depthRange">AI 深度 <span id="depthValue">2</span></label>
+          <input id="depthRange" type="range" min="1" max="4" value="2" />
+        </section>
+
+        <section class="panel-block">
+          <div class="panel-title">
+            <span>AI 对照</span>
+            <strong id="analysisState">等待落子</strong>
+          </div>
+          <ol id="suggestionList" class="suggestion-list"></ol>
+        </section>
+
+        <section class="panel-block history-card">
+          <div class="panel-title">
+            <span>棋谱</span>
+            <strong id="moveCount">0 手</strong>
+          </div>
+          <ol id="historyList" class="history-list"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
